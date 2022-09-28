@@ -1,6 +1,6 @@
 const express = require("express");
 const app = express();
-const morgan = require("morgan");
+// const morgan = require("morgan");
 const path = require("path");
 const cookieParser = require("cookie-parser");
 const userRouter = require("./router/userRouter");
@@ -17,7 +17,7 @@ app.use(cookieParser());
 
 app.use(cors());
 
-app.use(morgan("dev"));
+// app.use(morgan("dev"));
 
 app.use("/user", userRouter);
 app.use("/", generalRouter);
