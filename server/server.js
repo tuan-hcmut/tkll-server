@@ -42,6 +42,25 @@ const client = mqtt.connect(`mqtt://${process.env.MQTT_SERVER}:${process.env.MQT
   reconnectPeriod: 1000,
 });
 
+const handleSave = (type, data) => {
+  if (type.length === 0) {
+    type.push(data);
+    currentUser = data;
+  }
+  for (let i = 0; i < type.length; i++) {
+    if (type[i].username === data.username) {
+      currentUser = type[i];
+      socket.emit("error", { message: "username already exist!!", data: type[i] });
+      break;
+    } else {
+      type.push(data);
+      currentUser = data;
+      socket.emit("success", { message: "Add success!!!", data: data });
+      break;
+    }
+  }
+  // console.log(customer, currentUser);
+};
 //////// socket /////////////////
 
 const io = require("socket.io")(server, { cors: { origin: "*" } });
@@ -49,24 +68,7 @@ const io = require("socket.io")(server, { cors: { origin: "*" } });
 io.on("connection", (socket) => {
   socket.on("data-register", (data) => {
     ///// data : {username: String, role: String, energyRemaining: Number, ethRemaining: Number}   //////
-    if (customer.length === 0) {
-      customer.push(data);
-      currentUser = data;
-    }
-    for (let i = 0; i < customer.length; i++) {
-      if (customer[i].username === data.username) {
-        currentUser = customer[i];
-        socket.emit("error", { message: "username already exist!!", data: customer[i] });
-        break;
-      } else {
-        customer.push(data);
-        currentUser = data;
-        socket.emit("success", { message: "Add success!!!", data: data });
-        break;
-      }
-    }
-
-    console.log(customer, currentUser);
+    data.type === "buyer" ? handleSave(customer, data) : handleSave(seller, data);
   });
   socket.on("disconnect", () => {});
 
