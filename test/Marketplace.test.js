@@ -1,3 +1,5 @@
+
+/* eslint-disable */
 const Marketplace = artifacts.require('./Marketplace.sol')
 
 require('chai')
