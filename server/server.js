@@ -4,10 +4,9 @@ const initSockets = require("./src/sockets");
 const mqtt = require("mqtt");
 dotenv.config({ path: "./config.env" });
 
-let customer = [];
-let seller = [];
+let users = [];
 let currentUser = {
-  username: "",
+  account: "",
   role: "",
   energyRemaining: 0,
   ethRemaining: 0,
@@ -48,31 +47,27 @@ const io = require("socket.io")(server, { cors: { origin: "*" } });
 
 io.on("connection", (socket) => {
   console.log("socket connected");
-  const handleSave = (type, data) => {
-    data.energyRemaining = 20;
-    if (type.length === 0) {
-      type.push(data);
+
+  socket.on("data-register", (data) => {
+    if (data === undefined) return;
+    if (users.length === 0) {
+      users.push(data);
       currentUser = data;
-    }
-    for (let i = 0; i < type.length; i++) {
-      if (type[i].username === data.username) {
-        currentUser = type[i];
-        socket.emit("error", { message: "username already exist!!", data: type[i] });
-        break;
-      } else {
-        type.push(data);
+    } else {
+      let temp = false;
+      for (let i = 0; i < users.length; i++) {
+        if (users[i].account === data.account) {
+          currentUser = users[i];
+          temp = true;
+          break;
+        }
+      }
+      if (temp === false) {
+        users.push(data);
         currentUser = data;
-        socket.emit("success", { message: "Add success!!!", data: data });
-        break;
       }
     }
-    // console.log(customer, currentUser);
-  };
-  socket.on("data-register", (data) => {
-    ///// data : {username: String, role: String, energyRemaining: Number, ethRemaining: Number}   //////
-    data.type === "buyer" ? handleSave(customer, data) : handleSave(seller, data);
-    socket.emit("EnergyRemaining", currentUser.energyRemaining);
-    console.log(currentUser);
+    socket.emit("current-user", currentUser);
   });
   socket.on("disconnect", () => {});
 
@@ -81,17 +76,13 @@ io.on("connection", (socket) => {
   client.on("connect", () => {
     console.log("connect to mqtt broker");
     client.subscribe(process.env.MQTT_TOPIC1.toString(), () => {
-      console.log(`Subscribe to topic ${process.env.MQTT_TOPIC1?.toString()}`);
+      console.log(`Subscribe to topic '${process.env.MQTT_TOPIC1?.toString()}'`);
     });
     client.subscribe(process.env.MQTT_TOPIC2.toString(), () => {
-      console.log(`Subscribe to topic ${process.env.MQTT_TOPIC2?.toString()}`);
-    });
-    client.subscribe(process.env.MQTT_TOPIC3.toString(), () => {
-      console.log(`Subscribe to topic ${process.env.MQTT_TOPIC3?.toString()}`);
+      console.log(`Subscribe to topic '${process.env.MQTT_TOPIC2?.toString()}'`);
     });
   });
   const handleTransferData = () => {
-    console.log("start again");
     client.on("message", (topic, payload) => {
       console.log("Received Message:", topic, payload.toString());
       // esp send num of energy remaining (each time eps send, num of energy will be reduce)
@@ -100,16 +91,18 @@ io.on("connection", (socket) => {
         console.log("energy used: " + parseInt(payload.toString("utf8")));
         //const energyRemaining = 10;
         currentUser.energyRemaining = energyRemaining;
-        if (currentUser.energyRemaining < 0) {
-          currentUser.energyRemaining = 0;
+        for (let i = 0; i < users.length; i++) {
+          if (users[i].account === currentUser.account) {
+            users[i].energyRemaining = energyRemaining;
+            // socket.emit("current-user", users[i]);
+            break;
+          }
         }
-        socket.emit("EnergyRemaining", currentUser.energyRemaining);
         console.log(currentUser);
       }
       if (topic.toString() === "mqtt/connection") {
         console.log("device connected");
-        if (currentUser.energyRemaining <= 0) {
-          currentUser.energyRemaining = 0;
+        if (currentUser.energyRemaining < 0) {
           socket.emit("out-of-energy", "");
           console.log("no energy left");
           client.publish("mqtt/remainingEnergy", "done", { qos: 0, retain: false }, (error) => {
@@ -119,7 +112,7 @@ io.on("connection", (socket) => {
             return;
           });
         } else {
-          console.log("start connected, eneryremaning: " + currentUser.energyRemaining);
+          socket.emit("current-user", currentUser);
           client.publish("mqtt/remainingEnergy", "keep", { qos: 0, retain: false }, (error) => {
             if (error) {
               console.log(error);
@@ -127,8 +120,7 @@ io.on("connection", (socket) => {
           });
         }
       }
-      if (currentUser.energyRemaining <= 0) {
-        currentUser.energyRemaining = 0;
+      if (currentUser.energyRemaining < 0) {
         socket.emit("out-of-energy", "");
         console.log("no energy left");
         client.publish("mqtt/remainingEnergy", "done", { qos: 0, retain: false }, (error) => {
@@ -138,6 +130,7 @@ io.on("connection", (socket) => {
           return;
         });
       } else {
+        socket.emit("current-user", currentUser);
         client.publish("mqtt/remainingEnergy", "keep", { qos: 0, retain: false }, (error) => {
           if (error) {
             console.log(error);
@@ -150,8 +143,18 @@ io.on("connection", (socket) => {
   handleTransferData();
 
   socket.on("buy-more-energy", (data) => {
-    currentUser.energyRemaining = currentUser.energyRemaining + data;
+    const eth = (parseInt(data.eth) / 1000000000000000000).toFixed(2);
+    for (let i = 0; i < users.length; i++) {
+      if (users[i].account === data.account) {
+        users[i].energyRemaining = users[i].energyRemaining + data.energy;
+        users[i].ethRemaining = users[i].ethRemaining - eth;
+        socket.emit("current-user", users[i]);
+        break;
+      }
+    }
+
+    currentUser.energyRemaining = currentUser.energyRemaining + data.energy;
+    currentUser.ethRemaining = currentUser.ethRemaining - eth;
     handleTransferData();
-    console.log(currentUser.energyRemaining);
   });
 });
