@@ -16,6 +16,7 @@ const App = () => {
     account: null,
     ethRemaining: null,
     energyRemaining: null,
+    message: "",
   });
 
   const [market, setMarket] = useState({
@@ -27,6 +28,14 @@ const App = () => {
   const [products, setProducts] = useState({ products: [] });
 
   useEffect(() => {
+    socket.on("out-of-energy", (data) => {
+      console.log("out-of-energy");
+    });
+
+    socket.on("current-user", (data) => {
+      setUserInfor(data);
+    });
+
     const loadWeb3 = async () => {
       if (window.ethereum) {
         window.web3 = new Web3(window.ethereum);
@@ -39,6 +48,7 @@ const App = () => {
 
       ////// get all data we need ////////
       const { userData, market, products } = await loadBlockchainData();
+      socket.emit("data-register", userData);
 
       setProducts({
         products: [products],
@@ -49,7 +59,8 @@ const App = () => {
         productCount: market.productCount,
       });
 
-      setUserInfor(userData);
+      localStorage.setItem("id", userData.account.toString());
+      // tạo thêm socket để nhận biết là user đăng nhập hay chưa
     };
 
     loadWeb3();
@@ -65,7 +76,7 @@ const App = () => {
       .send({ from: userInfor.account })
       .once("receipt", async (receipt) => {
         toast.success(`You have been created product success!!!`);
-        const { userData, market, products } = await loadBlockchainData();
+        const { market, products } = await loadBlockchainData();
 
         setProducts({
           products: [products],
@@ -76,8 +87,6 @@ const App = () => {
           productCount: market.productCount,
         });
 
-        setUserInfor(userData);
-
         setLoading({
           loading: false,
         });
@@ -85,6 +94,7 @@ const App = () => {
   };
 
   const purchaseProduct = (id, price) => {
+    if (id === undefined || price === undefined) return;
     setLoading({
       loading: true,
     });
@@ -94,9 +104,7 @@ const App = () => {
       .send({ from: userInfor.account, value: price })
       .once("receipt", async (receipt) => {
         toast.success(`Buy success!!!`);
-
         const { userData, market, products } = await loadBlockchainData();
-
         setProducts({
           products: [products],
         });
@@ -106,10 +114,14 @@ const App = () => {
           productCount: market.productCount,
         });
 
-        setUserInfor(userData);
-
         setLoading({
           loading: false,
+        });
+
+        socket.emit("buy-more-energy", {
+          energy: 100,
+          account: localStorage.getItem("id"),
+          eth: price,
         });
       });
   };
