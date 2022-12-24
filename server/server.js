@@ -8,7 +8,7 @@ let users = [];
 let currentUser = {
   account: "",
   role: "",
-  energyRemaining: 0,
+  energyRemaining: 1,
   ethRemaining: 0,
 };
 
@@ -81,13 +81,28 @@ io.on("connection", (socket) => {
     client.subscribe(process.env.MQTT_TOPIC2.toString(), () => {
       console.log(`Subscribe to topic '${process.env.MQTT_TOPIC2?.toString()}'`);
     });
+    client.subscribe(process.env.MQTT_TOPIC3.toString(), () => {
+      console.log(`Subscribe to topic '${process.env.MQTT_TOPIC3?.toString()}'`);
+    });
   });
   const handleTransferData = () => {
     client.on("message", (topic, payload) => {
       console.log("Received Message:", topic, payload.toString());
       // esp send num of energy remaining (each time eps send, num of energy will be reduce)
       if (topic.toString() === "mqtt/energyUsed") {
-        const energyRemaining = currentUser.energyRemaining - parseInt(payload.toString("utf8"));
+        let energyRemaining = currentUser.energyRemaining - parseInt(payload.toString("utf8"));
+        if (energyRemaining <= 0) {
+          energyRemaining = 0;
+          // client.unsubscribe(process.env.MQTT_TOPIC1.toString(), () => console.log(`UnSubscribe to topic '${process.env.MQTT_TOPIC1?.toString()}'`));
+          client.publish("mqtt/energyAvailable", energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
+            if (error) {
+              console.log(error);
+            }
+            return;
+          });
+        } else {
+          socket.emit("current-user", currentUser);
+        }
         console.log("energy used: " + parseInt(payload.toString("utf8")));
         //const energyRemaining = 10;
         currentUser.energyRemaining = energyRemaining;
@@ -100,12 +115,13 @@ io.on("connection", (socket) => {
         }
         console.log(currentUser);
       }
+
       if (topic.toString() === "mqtt/connection") {
         console.log("device connected");
-        if (currentUser.energyRemaining < 0) {
-          socket.emit("out-of-energy", "");
+        if (currentUser.energyRemaining <= 0) {
+          socket.emit("out-of-energy", currentUser);
           console.log("no energy left");
-          client.publish("mqtt/remainingEnergy", "done", { qos: 0, retain: false }, (error) => {
+          client.publish("mqtt/energyAvailable", currentUser.energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
             if (error) {
               console.log(error);
             }
@@ -113,29 +129,12 @@ io.on("connection", (socket) => {
           });
         } else {
           socket.emit("current-user", currentUser);
-          client.publish("mqtt/remainingEnergy", "keep", { qos: 0, retain: false }, (error) => {
+          client.publish("mqtt/energyAvailable", currentUser.energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
             if (error) {
               console.log(error);
             }
           });
         }
-      }
-      if (currentUser.energyRemaining < 0) {
-        socket.emit("out-of-energy", "");
-        console.log("no energy left");
-        client.publish("mqtt/remainingEnergy", "done", { qos: 0, retain: false }, (error) => {
-          if (error) {
-            console.log(error);
-          }
-          return;
-        });
-      } else {
-        socket.emit("current-user", currentUser);
-        client.publish("mqtt/remainingEnergy", "keep", { qos: 0, retain: false }, (error) => {
-          if (error) {
-            console.log(error);
-          }
-        });
       }
     });
   };
@@ -152,9 +151,15 @@ io.on("connection", (socket) => {
         break;
       }
     }
-
-    currentUser.energyRemaining = currentUser.energyRemaining + data.energy;
-    currentUser.ethRemaining = currentUser.ethRemaining - eth;
-    handleTransferData();
+    client.on("message", (topic, payload) => {
+      if (topic.toString() === "mqtt/noEnergy") {
+        client.publish("mqtt/energyAvailable", currentUser.energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
+          if (error) {
+            console.log(error);
+          }
+          return;
+        });
+      }
+    });
   });
 });
