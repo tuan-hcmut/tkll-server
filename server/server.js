@@ -1,14 +1,14 @@
 const dotenv = require("dotenv");
 const mongoose = require("mongoose");
-const initSockets = require("./src/sockets");
 const mqtt = require("mqtt");
 dotenv.config({ path: "./config.env" });
 
 let users = [];
+let isActive = false;
 let currentUser = {
   account: "",
   role: "",
-  energyRemaining: 1,
+  energyRemaining: 0,
   ethRemaining: 0,
 };
 
@@ -32,22 +32,30 @@ const server = app.listen(port, () => {
   console.log(`Listen on port 127.0.0.1:${port}`);
 });
 
-const client = mqtt.connect(`mqtt://${process.env.MQTT_SERVER}:${process.env.MQTT_PORT}`, {
-  clientId: process.env.MQTT_CLIENTID,
-  clean: true,
-  connectTimeout: 4000,
-  username: process.env.MQTT_USERNAME.toString(),
-  password: process.env.MQTT_PASSWORD.toString(),
-  reconnectPeriod: 1000,
-});
-
-//////// socket /////////////////
+////// socket /////////////////
 
 const io = require("socket.io")(server, { cors: { origin: "*" } });
 
 io.on("connection", (socket) => {
   console.log("socket connected");
+  const client = mqtt.connect(`mqtt://${process.env.MQTT_SERVER}:${process.env.MQTT_PORT}`, {
+    clientId: process.env.MQTT_CLIENTID,
+    clean: true,
+    connectTimeout: 4000,
+    username: process.env.MQTT_USERNAME.toString(),
+    password: process.env.MQTT_PASSWORD.toString(),
+    reconnectPeriod: 1000,
+  });
 
+  client.subscribe(process.env.MQTT_TOPIC1.toString(), () => {
+    console.log(`Subscribe to topic '${process.env.MQTT_TOPIC1?.toString()}'`);
+  });
+  client.subscribe(process.env.MQTT_TOPIC2.toString(), () => {
+    console.log(`Subscribe to topic '${process.env.MQTT_TOPIC2?.toString()}'`);
+  });
+  client.subscribe(process.env.MQTT_TOPIC3.toString(), () => {
+    console.log(`Subscribe to topic '${process.env.MQTT_TOPIC3?.toString()}'`);
+  });
   socket.on("data-register", (data) => {
     if (data === undefined) return;
     if (users.length === 0) {
@@ -69,78 +77,64 @@ io.on("connection", (socket) => {
     }
     socket.emit("current-user", currentUser);
   });
-  socket.on("disconnect", () => {});
+  socket.on("disconnect", () => {
+    client.unsubscribe(process.env.MQTT_TOPIC1.toString(), () => {
+      console.log(`unsubscribe to topic '${process.env.MQTT_TOPIC1?.toString()}'`);
+    });
+    client.unsubscribe(process.env.MQTT_TOPIC2.toString(), () => {
+      console.log(`unsubscribe to topic '${process.env.MQTT_TOPIC2?.toString()}'`);
+    });
+    client.unsubscribe(process.env.MQTT_TOPIC3.toString(), () => {
+      console.log(`unsubscribe to topic '${process.env.MQTT_TOPIC3?.toString()}'`);
+    });
+    // client.end(true);
+  });
 
   /////////////// connect to broker //////////////////
 
-  client.on("connect", () => {
-    console.log("connect to mqtt broker");
-    client.subscribe(process.env.MQTT_TOPIC1.toString(), () => {
-      console.log(`Subscribe to topic '${process.env.MQTT_TOPIC1?.toString()}'`);
-    });
-    client.subscribe(process.env.MQTT_TOPIC2.toString(), () => {
-      console.log(`Subscribe to topic '${process.env.MQTT_TOPIC2?.toString()}'`);
-    });
-    client.subscribe(process.env.MQTT_TOPIC3.toString(), () => {
-      console.log(`Subscribe to topic '${process.env.MQTT_TOPIC3?.toString()}'`);
-    });
-  });
+  const handleUpdate = (energyRemaining, payload, account) => {
+    let temp = energyRemaining - payload;
+
+    for (let i = 0; i < users.length; i++) {
+      if (users[i].account === account) {
+        users[i].energyRemaining = temp <= 0 ? 0 : temp;
+        break;
+      }
+    }
+  };
+
   const handleTransferData = () => {
     client.on("message", (topic, payload) => {
-      console.log("Received Message:", topic, payload.toString());
-      // esp send num of energy remaining (each time eps send, num of energy will be reduce)
-      if (topic.toString() === "mqtt/energyUsed") {
-        let energyRemaining = currentUser.energyRemaining - parseInt(payload.toString("utf8"));
-        if (energyRemaining <= 0) {
-          energyRemaining = 0;
-          // client.unsubscribe(process.env.MQTT_TOPIC1.toString(), () => console.log(`UnSubscribe to topic '${process.env.MQTT_TOPIC1?.toString()}'`));
-          client.publish("mqtt/energyAvailable", energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
-            if (error) {
-              console.log(error);
-            }
-            return;
-          });
-        } else {
-          socket.emit("current-user", currentUser);
-        }
-        console.log("energy used: " + parseInt(payload.toString("utf8")));
-        //const energyRemaining = 10;
-        currentUser.energyRemaining = energyRemaining;
-        for (let i = 0; i < users.length; i++) {
-          if (users[i].account === currentUser.account) {
-            users[i].energyRemaining = energyRemaining;
-            // socket.emit("current-user", users[i]);
-            break;
+      if (topic.toString() === "energyUsed" && isActive) {
+        handleUpdate(currentUser.energyRemaining, parseInt(payload.toString("utf8")), currentUser.account);
+        console.log("energyUsed", currentUser.energyRemaining);
+
+        client.publish("energyAvailable", currentUser.energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
+          if (error) {
+            console.log(error);
           }
-        }
-        console.log(currentUser);
+        });
+
+        socket.emit("current-user", currentUser);
+        console.log("energy used: " + parseInt(payload.toString("utf8")));
       }
 
-      if (topic.toString() === "mqtt/connection") {
-        console.log("device connected");
-        if (currentUser.energyRemaining <= 0) {
-          socket.emit("out-of-energy", currentUser);
-          console.log("no energy left");
-          client.publish("mqtt/energyAvailable", currentUser.energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
-            if (error) {
-              console.log(error);
-            }
-            return;
-          });
-        } else {
-          socket.emit("current-user", currentUser);
-          client.publish("mqtt/energyAvailable", currentUser.energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
-            if (error) {
-              console.log(error);
-            }
-          });
-        }
+      if (topic.toString() === "connection" && !isActive) {
+        isActive = true;
+        console.log("connection");
+        handleUpdate(currentUser.energyRemaining, parseInt(payload.toString("utf8")), currentUser.account);
+
+        socket.emit("current-user", currentUser);
+        client.publish("energyAvailable", currentUser.energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
+          if (error) {
+            console.log(error);
+          }
+        });
       }
     });
   };
 
   handleTransferData();
-
   socket.on("buy-more-energy", (data) => {
     const eth = (parseInt(data.eth) / 1000000000000000000).toFixed(2);
     for (let i = 0; i < users.length; i++) {
@@ -151,15 +145,8 @@ io.on("connection", (socket) => {
         break;
       }
     }
-    client.on("message", (topic, payload) => {
-      if (topic.toString() === "mqtt/noEnergy") {
-        client.publish("mqtt/energyAvailable", currentUser.energyRemaining.toString(), { qos: 0, retain: false }, (error) => {
-          if (error) {
-            console.log(error);
-          }
-          return;
-        });
-      }
-    });
+
+    console.log(currentUser);
+    isActive = false;
   });
 });
